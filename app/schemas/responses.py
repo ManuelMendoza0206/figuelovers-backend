@@ -28,15 +28,12 @@ class AdjacencyMatrixResponse(BaseModel):
     matrix: list[list[float]] = Field(..., description="Matriz bidimensional (N x N) con los pesos")
     is_directed: bool = Field(..., description="Indica si la matriz representa un grafo dirigido")
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "nodes": ["A", "B", "C"],
-                "matrix": [
-                    [0.0, 5.0, 0.0],
-                    [5.0, 0.0, 10.0],
-                    [0.0, 10.0, 0.0]
-                ],
-                "is_directed": False
-            }
-        }
+    model_config = {"json_schema_extra": {"example": {
+        "nodes": ["A", "B", "C"],
+        "matrix": [
+            [0.0, 5.0, 0.0],
+            [5.0, 0.0, 10.0],
+            [0.0, 10.0, 0.0]
+        ],
+        "is_directed": False
+    }}}

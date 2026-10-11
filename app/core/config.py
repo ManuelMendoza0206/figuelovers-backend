@@ -1,3 +1,4 @@
+from pydantic import ConfigDict as SettingsConfigDict
 from pydantic_settings import BaseSettings
 
 
@@ -14,8 +15,10 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
 
-    class Config:
-        case_sensitive = True
+    # Pydantic v2: `class Config` esta deprecado. `model_config` debe ir
+    # a nivel de la clase, no anidado dentro de `class Config` (eso era
+    # inerte y el warning PydanticDeprecatedSince20 seguia apareciendo).
+    model_config = SettingsConfigDict(case_sensitive=True, extra="ignore")
 
 
 settings = Settings()

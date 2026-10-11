@@ -14,26 +14,29 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
 )
 
+# ==========================================
+# CORS
+# ==========================================
+# Se quitó el middleware `handle_cors_preflight` custom porque
+# reflejaba CUALQUIER origin con allow-credentials: eso es un
+# agujero. Lo correcto es que Starlette conteste el preflight OPTIONS
+# por nosotros, y aca se registra SOLO CORSMiddleware con una lista
+# cerrada de origenes.
+#
+# Sin esto el preflight devuelve 405 y el navegador bloquea TODAS las
+# llamadas del frontend con "No 'Access-Control-Allow-Origin' header".
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.BACKEND_CORS_ORIGINS,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=600,
 )
 
-@app.middleware("http")
-async def handle_cors_preflight(request: Request, call_next):
-    if request.method == "OPTIONS":
-        origin = request.headers.get("origin") or "*"
-        response = Response(status_code=200)
-        response.headers["Access-Control-Allow-Origin"] = origin if origin != "*" else "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = request.headers.get("access-control-request-headers", "*")
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        return response
-    return await call_next(request)
+
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
@@ -74,9 +77,10 @@ async def global_exception_handler(request: Request, exc: Exception):
     Captura CUALQUIER otro error interno (ej: División por cero, fallos en NetworkX).
     Evita que el servidor se caiga y el frontend se quede esperando.
     """
+    import traceback
+    traceback.print_exc()
     error_response = ErrorResponse(
         message="Error interno del servidor",
-        details=str(exc) # Nota: En producción real, no se envían los detalles crudos por seguridad
     )
     return JSONResponse(status_code=500, content=error_response.model_dump())
 

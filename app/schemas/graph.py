@@ -1,5 +1,5 @@
 from typing import Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, root_validator, ConfigDict
 
 class Position(BaseModel):
     """Posición espacial en el lienzo de React."""
@@ -29,10 +29,18 @@ class EdgeSchema(BaseModel):
     """Representación de una conexión entre dos nodos."""
     id: str = Field(..., description="Identificador único de la arista")
     source: str = Field(..., description="ID del nodo de origen")
-    target: str = Field(..., description="ID del nodo de destino")
-    weight: float | None = Field(1.0, description="Peso, costo o distancia de la arista")
+    target: str = Field(..., description="ID del nodo destino")
+    weight: float | None = Field(1.0, description="Peso, costo o distancia de la arista. Valores negativos solo permitidos para aristas dirigidas (usar con Johnson).")
     is_directed: bool = Field(False, description="¿Es una arista dirigida (flecha)?")
     label: str | None = Field(None, description="Etiqueta visual del peso (opcional)")
+
+    @root_validator(skip_on_failure=True)
+    def check_negative_weight(cls, values):
+        weight = values.get("weight")
+        is_directed = values.get("is_directed")
+        if weight is not None and weight < 0 and not is_directed:
+            raise ValueError("Negative weights are only allowed for directed edges (use Johnson algorithm)")
+        return values
 
     model_config = ConfigDict(
         json_schema_extra={

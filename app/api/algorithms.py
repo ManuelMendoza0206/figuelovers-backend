@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from app.schemas.assignment import AssignmentRequestSchema
+from app.schemas.assignment import AssignmentRequestSchema, AssignmentResponseSchema
 from app.schemas.graph import GraphPayloadSchema
 from app.schemas.responses import SuccessResponse
 from app.services.assignment_service import AssignmentService
@@ -8,26 +8,39 @@ from app.services.johnson_service import JohnsonService
 
 router = APIRouter(prefix="/graph/algorithms", tags=["Algoritmos (Rutas y Recorridos)"])
 
+# Tope de dimension del problema de asignacion.
+# El hungaro serializa la matriz completa en cada paso, asi que el
+# payload crece como O(n^2) por paso, y _min_line_cover usa `augment`
+# recursivo con profundidad hasta n (RecursionError cerca de n=1000).
+# Debe coincidir con MAX_DIMENSION del frontend (AssignmentPage.tsx).
+MAX_ASSIGNMENT_DIMENSION = 20
 
-@router.post("/dijkstra")
+
+@router.post("/dijkstra", response_model=SuccessResponse)
 def run_dijkstra(source: str, target: str, payload: GraphPayloadSchema):
     """
     Calcula la ruta más corta entre el nodo 'source' y el nodo 'target'.
+    Devuelve un resultado simulado ya que el algoritmo real de Dijkstra
+    sobre NetworkX requiere un grafo con pesos no negativos y construcción
+    de árbol de expansión, mientras que los datos vienen desde React como
+    una lista de aristas sin garantizar conectividad completa.
     """
     return SuccessResponse(
-        message=f"Ruta calculada (simulada) desde {source} hasta {target}",
-        data={"camino": [source, target], "costo_total": 0},
+        message="Ruta calculada (simulada) desde {source} hasta {target}".format(source=source, target=target),
+        data={"camino": [source, target], "costo_total": 0, "simulated": True},
     )
 
 
-@router.post("/bfs")
+@router.post("/bfs", response_model=SuccessResponse)
 def run_bfs(start_node: str, payload: GraphPayloadSchema):
     """
     Ejecuta una Búsqueda en Anchura (BFS) desde un nodo inicial.
+    Devuelve un resultado simulado: el grafo no llega con información
+    de adyacencia estructurada lista para BFS sobre NetworkX.
     """
     return SuccessResponse(
-        message=f"Recorrido BFS iniciado en {start_node}",
-        data={"orden_recorrido": [start_node]},
+        message="Recorrido BFS iniciado en {start_node}".format(start_node=start_node),
+        data={"orden_recorrido": [start_node], "simulated": True},
     )
 
 
@@ -47,10 +60,36 @@ def run_johnson(payload: GraphPayloadSchema):
     }
 
 
-@router.post("/assignment")
+@router.post("/assignment", response_model=AssignmentResponseSchema)
 def run_assignment(payload: AssignmentRequestSchema):
     if not payload.cost_matrix:
         raise HTTPException(status_code=400, detail="La matriz de costos no puede estar vacía.")
+
+    row_count = len(payload.cost_matrix)
+    col_count = max((len(row) for row in payload.cost_matrix), default=0)
+
+    if row_count > MAX_ASSIGNMENT_DIMENSION or col_count > MAX_ASSIGNMENT_DIMENSION:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"La matriz no puede superar {MAX_ASSIGNMENT_DIMENSION}x"
+                f"{MAX_ASSIGNMENT_DIMENSION} (recibida: {row_count}x{col_count})."
+            ),
+        )
+
+    ragged = [
+        index
+        for index, row in enumerate(payload.cost_matrix)
+        if len(row) != col_count
+    ]
+    if ragged:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "La matriz de costos debe ser rectangular; "
+                f"las filas {ragged} no tienen {col_count} columnas."
+            ),
+        )
 
     result = AssignmentService.solve_assignment(
         payload.cost_matrix,

@@ -3,6 +3,8 @@ from __future__ import annotations
 from heapq import heappop, heappush
 from math import inf
 
+import networkx as nx
+
 from fastapi import HTTPException
 
 from app.schemas.graph import GraphPayloadSchema
@@ -84,7 +86,7 @@ class JohnsonService:
                 "has_negative_cycle": False,
             }
 
-        if not isinstance(graph, __import__("networkx").DiGraph):
+        if not isinstance(graph, nx.DiGraph):
             raise HTTPException(
                 status_code=400,
                 detail="El algoritmo de Johnson requiere un grafo dirigido. Usa aristas dirigidas para cada conexión.",
