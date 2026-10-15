@@ -29,6 +29,10 @@ def validate_and_process_graph(payload: GraphPayloadSchema):
                 "total_aristas": G.number_of_edges(),
                 "es_dirigido": matrix_response.is_directed
             },
+            "nodos": [
+                {"id": node_id, "data": attributes.get("data")}
+                for node_id, attributes in G.nodes(data=True)
+            ],
             "matriz_adyacencia": matrix_response.model_dump(),
             "lista_adyacencia": adjacency_list
         }

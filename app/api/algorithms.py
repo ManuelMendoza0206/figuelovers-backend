@@ -2,9 +2,20 @@ from fastapi import APIRouter, HTTPException
 
 from app.schemas.assignment import AssignmentRequestSchema, AssignmentResponseSchema
 from app.schemas.graph import GraphPayloadSchema
+from app.schemas.northwest import NorthwestRequestSchema, NorthwestResponseSchema
+from app.schemas.tree import (
+    TreeBuildRequestSchema,
+    TreeBuildResponseSchema,
+    TreeReconstructRequestSchema,
+    TreeReconstructResponseSchema,
+    TreeTraverseRequestSchema,
+    TreeTraverseResponseSchema,
+)
 from app.schemas.responses import SuccessResponse
 from app.services.assignment_service import AssignmentService
 from app.services.johnson_service import JohnsonService
+from app.services.northwest_service import NorthwestService
+from app.services.tree_service import TreeService
 
 router = APIRouter(prefix="/graph/algorithms", tags=["Algoritmos (Rutas y Recorridos)"])
 
@@ -98,3 +109,32 @@ def run_assignment(payload: AssignmentRequestSchema):
         maximize=payload.maximize,
     )
     return result
+
+
+@router.post("/northwest", response_model=NorthwestResponseSchema)
+def run_northwest(payload: NorthwestRequestSchema):
+    return NorthwestService.solve(payload)
+
+
+@router.post("/tree/build", response_model=TreeBuildResponseSchema)
+def build_tree(payload: TreeBuildRequestSchema):
+    return TreeService.build(payload.mode, payload.values, payload.count, payload.seed)
+
+
+@router.post("/tree/traverse", response_model=TreeTraverseResponseSchema)
+def traverse_tree(payload: TreeTraverseRequestSchema):
+    if (payload.tree is None) == (payload.graph is None):
+        raise HTTPException(status_code=400, detail="Indica exactamente un árbol o un grafo del editor.")
+    tree = payload.tree if payload.tree is not None else TreeService.from_graph(payload.graph)
+    visits = TreeService.traverse(tree, payload.order)
+    return {
+        "order": payload.order,
+        "visits": visits,
+        "node_ids": [visit["id"] for visit in visits],
+        "values": [visit["value"] for visit in visits],
+    }
+
+
+@router.post("/tree/reconstruct", response_model=TreeReconstructResponseSchema)
+def reconstruct_tree(payload: TreeReconstructRequestSchema):
+    return TreeService.reconstruct(payload.inorder, payload.other, payload.other_order)

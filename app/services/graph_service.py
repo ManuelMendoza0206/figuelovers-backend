@@ -43,7 +43,8 @@ class GraphService:
             G.add_node(
                 node.id,
                 label=node.label,
-                position=node.position.model_dump() if node.position else None
+                position=node.position.model_dump() if node.position else None,
+                data=node.data,
             )
 
         # Insertar aristas
