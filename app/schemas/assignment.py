@@ -35,7 +35,13 @@ class AssignmentResponseSchema(BaseModel):
 
 
 class AssignmentRequestSchema(BaseModel):
-    cost_matrix: list[list[float]] | None = Field(None, description="Matriz de costos del problema de asignación")
+    cost_matrix: list[list[float | str | None]] | None = Field(
+        None,
+        description=(
+            "Matriz editable. Números y cadenas numéricas son costos permitidos; "
+            "null, vacío o 'prohibited' son celdas prohibidas."
+        ),
+    )
     row_labels: list[str] | None = Field(default=None, description="Etiquetas de filas; opcional")
     col_labels: list[str] | None = Field(default=None, description="Etiquetas de columnas; opcional")
     maximize: bool = Field(False, description="Indica si el objetivo es maximizar en lugar de minimizar")

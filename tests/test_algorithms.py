@@ -173,7 +173,11 @@ def test_assignment_preserves_a_legitimate_zero_cost_edge():
     assert labels == ["a", "b"]
     assert matrix == [[0, 0], [3, 0]]
     assert forbidden == [[True, False], [False, True]]
-    result = AssignmentService.solve_assignment(matrix, forbidden_cells=forbidden)
+    result = AssignmentService.solve_assignment(
+        matrix,
+        forbidden_cells=forbidden,
+        respect_forbidden_cells=True,
+    )
     assert result["status"] == "optimal"
     assert result["total_cost"] == 3
     assert {item["cost"] for item in result["assignments"]} == {0, 3}
@@ -202,8 +206,7 @@ def test_directed_edge_is_not_treated_as_bidirectional():
 
 def test_forbidden_cells_are_never_selected_even_when_their_cost_is_zero():
     result = AssignmentService.solve_assignment(
-        [[0, 5], [2, 0]],
-        forbidden_cells=[[True, False], [False, True]],
+        [[None, 5], [2, None]],
     )
 
     assert result["status"] == "optimal"
@@ -212,6 +215,82 @@ def test_forbidden_cells_are_never_selected_even_when_their_cost_is_zero():
         ("1", "0"),
     }
     assert result["total_cost"] == 7
+
+
+def test_editing_a_prohibited_cell_with_numeric_cost_enables_it():
+    response = client.post(
+        "/api/v1/graph/algorithms/assignment",
+        json={
+            "cost_matrix": [["03", None], [2, 4]],
+            "forbidden_cells": [[True, True], [False, False]],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "optimal"
+    assert body["initial_cost_matrix"] == [[3.0, None], [2.0, 4.0]]
+    assert body["total_cost"] == 7
+    assert {(item["row"], item["col"]) for item in body["assignments"]} == {
+        ("0", "0"),
+        ("1", "1"),
+    }
+
+
+def test_empty_and_special_values_remain_prohibited():
+    response = client.post(
+        "/api/v1/graph/algorithms/assignment",
+        json={
+            "cost_matrix": [["", "prohibited"], [None, "  "]],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "infeasible"
+    assert body["assignments"] == []
+
+
+def test_invalid_numeric_cost_returns_validation_error():
+    response = client.post(
+        "/api/v1/graph/algorithms/assignment",
+        json={"cost_matrix": [["not-a-number"]]},
+    )
+
+    assert response.status_code == 422
+    assert "número válido" in response.json()["message"]
+
+
+def test_assignment_recalculates_steps_and_result_from_each_received_matrix():
+    first = client.post(
+        "/api/v1/graph/algorithms/assignment",
+        json={
+            "cost_matrix": [[None, "03"], [2, 4]],
+            "row_labels": ["R1", "R2"],
+            "col_labels": ["C1", "C2"],
+        },
+    )
+    second = client.post(
+        "/api/v1/graph/algorithms/assignment",
+        json={
+            "cost_matrix": [[1, None], [None, 1]],
+            "row_labels": ["R1", "R2"],
+            "col_labels": ["C1", "C2"],
+        },
+    )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    first_body = first.json()
+    second_body = second.json()
+    assert first_body["status"] == "optimal"
+    assert second_body["status"] == "optimal"
+    assert first_body["total_cost"] == 5
+    assert second_body["total_cost"] == 2
+    assert first_body["initial_cost_matrix"] != second_body["initial_cost_matrix"]
+    assert first_body["steps"] != second_body["steps"]
+    assert first_body["steps"][0]["matrix"] == [[None, 0.0], [0.0, 2.0]]
+    assert second_body["steps"][0]["matrix"] == [[0.0, None], [None, 0.0]]
 
 
 def test_assignment_example_with_four_directed_nodes_is_infeasible():
@@ -267,8 +346,7 @@ def test_assignment_uses_the_updated_graph_instead_of_stale_matrix_data():
 @pytest.mark.parametrize("maximize", [False, True])
 def test_assignment_steps_preserve_forbidden_cells_as_null(maximize):
     payload = {
-        "cost_matrix": [[4, 9], [2, 7]],
-        "forbidden_cells": [[True, False], [False, True]],
+        "cost_matrix": [[None, 9], [2, None]],
         "maximize": maximize,
     }
 

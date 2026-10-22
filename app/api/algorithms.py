@@ -75,19 +75,22 @@ def run_johnson(payload: GraphPayloadSchema):
 
 @router.post("/assignment", response_model=AssignmentResponseSchema)
 def run_assignment(payload: AssignmentRequestSchema):
-    forbidden_cells = payload.forbidden_cells
-    row_labels = payload.row_labels
-    col_labels = payload.col_labels
-
-    if payload.graph is not None:
+    # La matriz enviada por el cliente es la entrada principal del cálculo.
+    # El grafo solo se usa como compatibilidad cuando no se envía una matriz.
+    if payload.cost_matrix is not None:
+        cost_matrix = payload.cost_matrix
+        forbidden_cells = payload.forbidden_cells
+        row_labels = payload.row_labels
+        col_labels = payload.col_labels
+        respect_forbidden_cells = False
+    else:
         GraphService._validate_graph_integrity(payload.graph)
         cost_matrix, forbidden_cells, graph_labels = MathService.generate_assignment_matrix(
             payload.graph
         )
-        row_labels = row_labels or graph_labels
-        col_labels = col_labels or graph_labels
-    else:
-        cost_matrix = payload.cost_matrix
+        row_labels = payload.row_labels or graph_labels
+        col_labels = payload.col_labels or graph_labels
+        respect_forbidden_cells = True
 
     if not cost_matrix:
         raise HTTPException(status_code=400, detail="La matriz de costos no puede estar vacía.")
@@ -125,6 +128,7 @@ def run_assignment(payload: AssignmentRequestSchema):
             col_labels=col_labels,
             maximize=payload.maximize,
             forbidden_cells=forbidden_cells,
+            respect_forbidden_cells=respect_forbidden_cells,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

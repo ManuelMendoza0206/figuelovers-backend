@@ -60,8 +60,24 @@ La respuesta distingue:
   ejecución; no es una solución matemática.
 
 La matriz `cost_matrix` sigue aceptándose para compatibilidad con clientes
-anteriores. Para el módulo basado en el editor, debe usarse `graph`; el
-frontend no debe mantener ni enviar una matriz independiente.
+anteriores. Cuando se recibe `cost_matrix` desde la matriz editable:
+
+- Un número o una cadena numérica como `"03"` se normaliza a `3.0` y habilita
+  la celda, incluso si la máscara anterior la marcaba como prohibida.
+- `null`, una cadena vacía o `null`/`prohibited` como texto mantiene la celda
+  prohibida.
+- Los valores no numéricos producen un error `422` comprensible.
+
+Para el módulo basado en el editor debe usarse `graph`; el frontend no debe
+mantener ni enviar una matriz independiente. La máscara generada desde el
+grafo se respeta estrictamente, porque sus ceros numéricos son solo valores
+de relleno de celdas inexistentes. La edición directa debe enviar el costo
+numérico o `null` en la matriz editable.
+
+Cuando el cliente envía `cost_matrix`, el endpoint procesa estrictamente esa
+matriz en esa solicitud y no busca nodos ni costos en un grafo anterior. La
+respuesta incluye `initial_cost_matrix`, `steps` recalculados y el resultado
+óptimo correspondiente a esa misma entrada.
 
 ## Demostración
 

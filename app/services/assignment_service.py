@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from math import isfinite
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -8,16 +9,68 @@ from scipy.optimize import linear_sum_assignment
 
 class AssignmentService:
     FORBIDDEN_COST = 1_000_000_000.0
+    PROHIBITED_VALUES = {"", "null", "none", "prohibited", "forbidden", "infinity", "inf"}
+
+    @staticmethod
+    def _normalize_cost_matrix(
+        cost_matrix,
+        forbidden_cells=None,
+        respect_forbidden_cells=False,
+    ):
+        if cost_matrix is None:
+            return [], []
+
+        matrix = []
+        forbidden = []
+        for row in cost_matrix:
+            normalized_row = []
+            forbidden_row = []
+            for value in row:
+                if value is None or (
+                    isinstance(value, str)
+                    and value.strip().lower() in AssignmentService.PROHIBITED_VALUES
+                ):
+                    normalized_row.append(0.0)
+                    forbidden_row.append(True)
+                    continue
+
+                try:
+                    numeric_value = float(value)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"El costo {value!r} no es un número válido."
+                    ) from exc
+                if not isfinite(numeric_value):
+                    raise ValueError(
+                        f"El costo {value!r} debe ser un número finito o una celda prohibida."
+                    )
+                normalized_row.append(numeric_value)
+                forbidden_row.append(False)
+            matrix.append(normalized_row)
+            forbidden.append(forbidden_row)
+
+        if not matrix:
+            return [], []
+
+        if forbidden_cells is not None:
+            if len(forbidden_cells) != len(matrix) or any(
+                len(row) != len(matrix[0]) for row in forbidden_cells
+            ):
+                raise ValueError("La máscara de celdas prohibidas no coincide con la matriz.")
+            # La máscara se conserva para clientes antiguos que envían celdas
+            # prohibidas como null/vacío; los valores numéricos editados ganan.
+            for r, row in enumerate(forbidden_cells):
+                for c, marked_forbidden in enumerate(row):
+                    if marked_forbidden and (
+                        respect_forbidden_cells or forbidden[r][c]
+                    ):
+                        forbidden[r][c] = True
+
+        return matrix, forbidden
 
     @staticmethod
     def _normalize_matrix(cost_matrix):
-        if cost_matrix is None:
-            return []
-
-        matrix = [[float(value) for value in row] for row in cost_matrix]
-        if not matrix:
-            return []
-
+        matrix, _ = AssignmentService._normalize_cost_matrix(cost_matrix)
         return matrix
 
     @staticmethod
@@ -250,8 +303,13 @@ class AssignmentService:
         col_labels=None,
         maximize: bool = False,
         forbidden_cells=None,
+        respect_forbidden_cells: bool = False,
     ):
-        matrix = AssignmentService._normalize_matrix(cost_matrix)
+        matrix, normalized_forbidden = AssignmentService._normalize_cost_matrix(
+            cost_matrix,
+            forbidden_cells,
+            respect_forbidden_cells=respect_forbidden_cells,
+        )
         if not matrix:
             return {
                 "assignments": [],
@@ -264,14 +322,7 @@ class AssignmentService:
 
         original_rows = len(matrix)
         original_cols = len(matrix[0]) if matrix else 0
-        if forbidden_cells is None:
-            forbidden = [[False] * original_cols for _ in range(original_rows)]
-        else:
-            if len(forbidden_cells) != original_rows or any(
-                len(row) != original_cols for row in forbidden_cells
-            ):
-                raise ValueError("La máscara de celdas prohibidas no coincide con la matriz.")
-            forbidden = [[bool(value) for value in row] for row in forbidden_cells]
+        forbidden = normalized_forbidden
 
         if maximize:
             allowed_values = [
@@ -294,7 +345,7 @@ class AssignmentService:
             transformed = [list(row) for row in matrix]
 
         padded, padded_forbidden = AssignmentService._pad_to_square(
-            transformed, forbidden if forbidden_cells is not None else None
+            transformed, forbidden
         )
         if padded_forbidden is not None:
             allowed_values = [
