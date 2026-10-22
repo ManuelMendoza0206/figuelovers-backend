@@ -19,6 +19,9 @@ def validate_and_process_graph(payload: GraphPayloadSchema):
     # 2. Usar los servicios matemáticos para obtener los datos puros
     matrix_response = MathService.generate_adjacency_matrix(G)
     adjacency_list = MathService.generate_adjacency_list(G)
+    assignment_matrix, forbidden_cells, assignment_nodes = (
+        MathService.generate_assignment_matrix(payload)
+    )
 
     # 3. Retornar todo estructurado
     return SuccessResponse(
@@ -34,6 +37,11 @@ def validate_and_process_graph(payload: GraphPayloadSchema):
                 for node_id, attributes in G.nodes(data=True)
             ],
             "matriz_adyacencia": matrix_response.model_dump(),
+            "matriz_costos_asignacion": {
+                "nodes": assignment_nodes,
+                "matrix": assignment_matrix,
+                "forbidden_cells": forbidden_cells,
+            },
             "lista_adyacencia": adjacency_list
         }
     )

@@ -1,7 +1,33 @@
 import networkx as nx
 from app.schemas.responses import AdjacencyMatrixResponse
+from app.schemas.graph import GraphPayloadSchema
+
 
 class MathService:
+    @staticmethod
+    def generate_assignment_matrix(
+        payload: GraphPayloadSchema,
+    ) -> tuple[list[list[float]], list[list[bool]], list[str]]:
+        """
+        Construye la matriz de costos de asignación usando la dirección real
+        de cada arista. Una ausencia se conserva mediante una máscara separada.
+        """
+        nodes = [node.id for node in payload.nodes]
+        index = {node_id: position for position, node_id in enumerate(nodes)}
+        matrix = [[0.0 for _ in nodes] for _ in nodes]
+        forbidden = [[True for _ in nodes] for _ in nodes]
+
+        for edge in payload.edges:
+            row = index[edge.source]
+            col = index[edge.target]
+            matrix[row][col] = float(edge.weight if edge.weight is not None else 1.0)
+            forbidden[row][col] = False
+            if not edge.is_directed:
+                matrix[col][row] = matrix[row][col]
+                forbidden[col][row] = False
+
+        return matrix, forbidden, nodes
+
     @staticmethod
     def generate_adjacency_matrix(G: nx.Graph | nx.DiGraph) -> AdjacencyMatrixResponse:
         """

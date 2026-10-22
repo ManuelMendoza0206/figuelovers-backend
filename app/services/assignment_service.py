@@ -7,6 +7,8 @@ from scipy.optimize import linear_sum_assignment
 
 
 class AssignmentService:
+    FORBIDDEN_COST = 1_000_000_000.0
+
     @staticmethod
     def _normalize_matrix(cost_matrix):
         if cost_matrix is None:
@@ -19,7 +21,7 @@ class AssignmentService:
         return matrix
 
     @staticmethod
-    def _pad_to_square(matrix):
+    def _pad_to_square(matrix, forbidden=None):
         rows = len(matrix)
         cols = len(matrix[0]) if rows else 0
         target = max(rows, cols)
@@ -27,49 +29,88 @@ class AssignmentService:
         padded = [list(row) + [0.0] * (target - cols) for row in matrix]
         if len(padded) < target:
             padded.extend([[0.0] * target for _ in range(target - len(padded))])
-        return padded
+        if forbidden is None:
+            return padded, None
+
+        padded_forbidden = [
+            list(row) + [False] * (target - cols)
+            for row in forbidden
+        ]
+        if len(padded_forbidden) < target:
+            padded_forbidden.extend(
+                [[False] * target for _ in range(target - len(padded_forbidden))]
+            )
+        return padded, padded_forbidden
 
     @staticmethod
-    def _row_reduction(matrix):
+    def _row_reduction(matrix, forbidden=None):
         reduced = []
-        for row in matrix:
+        for row_index, row in enumerate(matrix):
             if not row:
                 reduced.append(row[:])
                 continue
-            min_val = min(row)
-            reduced.append([value - min_val for value in row])
+            allowed = [
+                value
+                for col_index, value in enumerate(row)
+                if forbidden is None or not forbidden[row_index][col_index]
+            ]
+            min_val = min(allowed) if allowed else 0.0
+            reduced.append([
+                value
+                if forbidden is not None and forbidden[row_index][col_index]
+                else value - min_val
+                for col_index, value in enumerate(row)
+            ])
         return reduced
 
     @staticmethod
-    def _column_reduction(matrix):
+    def _column_reduction(matrix, forbidden=None):
         if not matrix or not matrix[0]:
             return [row[:] for row in matrix]
         n_cols = len(matrix[0])
         reduced = [row[:] for row in matrix]
         for c in range(n_cols):
-            col_min = min(reduced[r][c] for r in range(len(reduced)))
+            allowed = [
+                reduced[r][c]
+                for r in range(len(reduced))
+                if forbidden is None or not forbidden[r][c]
+            ]
+            col_min = min(allowed) if allowed else 0.0
             for r in range(len(reduced)):
-                reduced[r][c] -= col_min
+                if forbidden is None or not forbidden[r][c]:
+                    reduced[r][c] -= col_min
         return reduced
 
     @staticmethod
-    def _find_min_uncovered(matrix, covered_rows, covered_cols):
+    def _find_min_uncovered(matrix, covered_rows, covered_cols, forbidden=None):
         uncovered = []
         for r in range(len(matrix)):
             for c in range(len(matrix[0])):
-                if r not in covered_rows and c not in covered_cols:
+                if (
+                    r not in covered_rows
+                    and c not in covered_cols
+                    and (forbidden is None or not forbidden[r][c])
+                ):
                     uncovered.append(matrix[r][c])
         return min(uncovered) if uncovered else None
 
     @staticmethod
-    def _update_matrix(matrix, covered_rows, covered_cols, min_uncovered):
+    def _update_matrix(
+        matrix,
+        covered_rows,
+        covered_cols,
+        min_uncovered,
+        forbidden=None,
+    ):
         rows = len(matrix)
         cols = len(matrix[0]) if rows else 0
         new_matrix = []
         for r in range(rows):
             row = []
             for c in range(cols):
-                if r in covered_rows and c in covered_cols:
+                if forbidden is not None and forbidden[r][c]:
+                    row.append(matrix[r][c])
+                elif r in covered_rows and c in covered_cols:
                     row.append(matrix[r][c] + min_uncovered)
                 elif r not in covered_rows and c not in covered_cols:
                     row.append(matrix[r][c] - min_uncovered)
@@ -77,6 +118,19 @@ class AssignmentService:
                     row.append(matrix[r][c])
             new_matrix.append(row)
         return new_matrix
+
+    @staticmethod
+    def _display_matrix(matrix, forbidden=None):
+        """Expone las prohibidas como null, nunca como el costo interno M."""
+        if forbidden is None:
+            return [row[:] for row in matrix]
+        return [
+            [
+                None if forbidden[r][c] else value
+                for c, value in enumerate(row)
+            ]
+            for r, row in enumerate(matrix)
+        ]
 
     @staticmethod
     def _max_bipartite_matching(zero_matrix):
@@ -190,27 +244,81 @@ class AssignmentService:
         return covered_rows, covered_cols
 
     @staticmethod
-    def solve_assignment(cost_matrix, row_labels=None, col_labels=None, maximize: bool = False):
+    def solve_assignment(
+        cost_matrix,
+        row_labels=None,
+        col_labels=None,
+        maximize: bool = False,
+        forbidden_cells=None,
+    ):
         matrix = AssignmentService._normalize_matrix(cost_matrix)
         if not matrix:
             return {
                 "assignments": [],
                 "total_cost": 0,
+                "status": "infeasible",
+                "message": "No existe una matriz de costos para resolver.",
                 "initial_cost_matrix": [],
                 "steps": [],
             }
 
         original_rows = len(matrix)
         original_cols = len(matrix[0]) if matrix else 0
+        if forbidden_cells is None:
+            forbidden = [[False] * original_cols for _ in range(original_rows)]
+        else:
+            if len(forbidden_cells) != original_rows or any(
+                len(row) != original_cols for row in forbidden_cells
+            ):
+                raise ValueError("La máscara de celdas prohibidas no coincide con la matriz.")
+            forbidden = [[bool(value) for value in row] for row in forbidden_cells]
 
         if maximize:
-            max_value = max(max(row) for row in matrix) if matrix else 0.0
-            transformed = [[max_value - value for value in row] for row in matrix]
+            allowed_values = [
+                matrix[r][c]
+                for r in range(original_rows)
+                for c in range(original_cols)
+                if not forbidden[r][c]
+            ]
+            max_value = max(allowed_values) if allowed_values else 0.0
+            transformed = [
+                [
+                    value
+                    if forbidden[r][c]
+                    else max_value - value
+                    for c, value in enumerate(row)
+                ]
+                for r, row in enumerate(matrix)
+            ]
         else:
             transformed = [list(row) for row in matrix]
 
-        padded = AssignmentService._pad_to_square(transformed)
-        initial_matrix = [row[:] for row in matrix]
+        padded, padded_forbidden = AssignmentService._pad_to_square(
+            transformed, forbidden if forbidden_cells is not None else None
+        )
+        if padded_forbidden is not None:
+            allowed_values = [
+                transformed[r][c]
+                for r in range(original_rows)
+                for c in range(original_cols)
+                if not forbidden[r][c]
+            ]
+            if not allowed_values:
+                return AssignmentService._infeasible_result(
+                    matrix,
+                    "No existe ninguna conexión permitida para asignar.",
+                    forbidden=forbidden,
+                )
+            max_abs_value = max(abs(value) for value in allowed_values)
+            forbidden_cost = max(
+                AssignmentService.FORBIDDEN_COST,
+                (max_abs_value + 1.0) * (max(original_rows, original_cols) + 1.0),
+            )
+            for r in range(len(padded)):
+                for c in range(len(padded[r])):
+                    if padded_forbidden[r][c]:
+                        padded[r][c] = forbidden_cost
+        initial_matrix = AssignmentService._display_matrix(matrix, forbidden)
 
         steps = []
         step_no = 1
@@ -219,7 +327,7 @@ class AssignmentService:
             steps.append({
                 "step": step_no,
                 "name": "Maximization Transform",
-                "matrix": [row[:] for row in transformed],
+                "matrix": AssignmentService._display_matrix(transformed, forbidden),
                 "description": (
                     f"Convert the maximization problem into a minimization one by "
                     f"turning each profit into an opportunity cost: cell = {max_value:g} - value"
@@ -228,21 +336,25 @@ class AssignmentService:
             step_no += 1
 
         # Step: Row reduction
-        reduced_matrix = AssignmentService._row_reduction(padded)
+        reduced_matrix = AssignmentService._row_reduction(padded, padded_forbidden)
         steps.append({
             "step": step_no,
             "name": "Row Reduction",
-            "matrix": [row[:] for row in reduced_matrix],
+            "matrix": AssignmentService._display_matrix(
+                reduced_matrix, padded_forbidden
+            ),
             "description": "Subtract the minimum of each row from all elements in that row",
         })
         step_no += 1
 
         # Step: Column reduction
-        after_col = AssignmentService._column_reduction(reduced_matrix)
+        after_col = AssignmentService._column_reduction(
+            reduced_matrix, padded_forbidden
+        )
         steps.append({
             "step": step_no,
             "name": "Column Reduction",
-            "matrix": [row[:] for row in after_col],
+            "matrix": AssignmentService._display_matrix(after_col, padded_forbidden),
             "description": "Subtract the minimum of each column from all elements in that column",
         })
         step_no += 1
@@ -271,22 +383,48 @@ class AssignmentService:
             if num_covered >= size:
                 break
 
-            min_uncovered = AssignmentService._find_min_uncovered(working, covered_rows, covered_cols)
+            min_uncovered = AssignmentService._find_min_uncovered(
+                working,
+                covered_rows,
+                covered_cols,
+                padded_forbidden,
+            )
             if min_uncovered is None:
                 break
 
-            working = AssignmentService._update_matrix(working, covered_rows, covered_cols, min_uncovered)
+            working = AssignmentService._update_matrix(
+                working,
+                covered_rows,
+                covered_cols,
+                min_uncovered,
+                padded_forbidden,
+            )
 
             steps.append({
                 "step": iteration,
                 "name": "Matrix Adjustment",
-                "matrix": [row[:] for row in working],
+                "matrix": AssignmentService._display_matrix(
+                    working, padded_forbidden
+                ),
                 "description": f"Adjust matrix: subtract {min_uncovered} from uncovered cells, add to covered cells",
                 "min_uncovered": min_uncovered,
             })
             iteration += 1
 
         row_idx, col_idx = linear_sum_assignment(np.array(padded, dtype=float), maximize=False)
+
+        if padded_forbidden is not None and any(
+            padded_forbidden[r][c] for r, c in zip(row_idx, col_idx)
+        ):
+            return AssignmentService._infeasible_result(
+                matrix,
+                "No existe una asignación perfecta válida con las conexiones disponibles.",
+                steps=steps,
+                padding_info=AssignmentService._padding_info(
+                    original_rows, original_cols, padded
+                ),
+                forbidden=forbidden,
+            )
 
         assignments = []
         selected_pairs = []
@@ -312,7 +450,7 @@ class AssignmentService:
         steps.append({
             "step": step_no,
             "name": "Select Independent Zeros",
-            "matrix": [row[:] for row in working],
+            "matrix": AssignmentService._display_matrix(working, padded_forbidden),
             "description": "Se seleccionan ceros no cubiertos, cada uno en una fila y columna distintas. Estos son los emparejamientos óptimos.",
             "selected_zeros": selected_zeros,
         })
@@ -336,7 +474,43 @@ class AssignmentService:
         return {
             "assignments": assignments,
             "total_cost": total_cost,
+            "status": "optimal",
+            "message": None,
             "initial_cost_matrix": initial_matrix,
             "steps": steps,
+            "padding_info": padding_info,
+        }
+
+    @staticmethod
+    def _padding_info(original_rows, original_cols, padded):
+        if original_rows == original_cols:
+            return None
+        padded_rows = len(padded)
+        padded_cols = len(padded[0]) if padded_rows else 0
+        return {
+            "original_rows": original_rows,
+            "original_cols": original_cols,
+            "padded_size": {"rows": padded_rows, "cols": padded_cols},
+            "dummy_rows": [i for i in range(padded_rows) if i >= original_rows],
+            "dummy_cols": [i for i in range(padded_cols) if i >= original_cols],
+        }
+
+    @staticmethod
+    def _infeasible_result(
+        matrix,
+        message,
+        steps=None,
+        padding_info=None,
+        forbidden=None,
+    ):
+        return {
+            "assignments": [],
+            "total_cost": 0,
+            "status": "infeasible",
+            "message": message,
+            "initial_cost_matrix": AssignmentService._display_matrix(
+                matrix, forbidden
+            ),
+            "steps": steps or [],
             "padding_info": padding_info,
         }

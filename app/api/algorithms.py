@@ -16,6 +16,8 @@ from app.services.assignment_service import AssignmentService
 from app.services.johnson_service import JohnsonService
 from app.services.northwest_service import NorthwestService
 from app.services.tree_service import TreeService
+from app.services.graph_service import GraphService
+from app.services.math_service import MathService
 
 router = APIRouter(prefix="/graph/algorithms", tags=["Algoritmos (Rutas y Recorridos)"])
 
@@ -73,11 +75,25 @@ def run_johnson(payload: GraphPayloadSchema):
 
 @router.post("/assignment", response_model=AssignmentResponseSchema)
 def run_assignment(payload: AssignmentRequestSchema):
-    if not payload.cost_matrix:
+    forbidden_cells = payload.forbidden_cells
+    row_labels = payload.row_labels
+    col_labels = payload.col_labels
+
+    if payload.graph is not None:
+        GraphService._validate_graph_integrity(payload.graph)
+        cost_matrix, forbidden_cells, graph_labels = MathService.generate_assignment_matrix(
+            payload.graph
+        )
+        row_labels = row_labels or graph_labels
+        col_labels = col_labels or graph_labels
+    else:
+        cost_matrix = payload.cost_matrix
+
+    if not cost_matrix:
         raise HTTPException(status_code=400, detail="La matriz de costos no puede estar vacía.")
 
-    row_count = len(payload.cost_matrix)
-    col_count = max((len(row) for row in payload.cost_matrix), default=0)
+    row_count = len(cost_matrix)
+    col_count = max((len(row) for row in cost_matrix), default=0)
 
     if row_count > MAX_ASSIGNMENT_DIMENSION or col_count > MAX_ASSIGNMENT_DIMENSION:
         raise HTTPException(
@@ -90,7 +106,7 @@ def run_assignment(payload: AssignmentRequestSchema):
 
     ragged = [
         index
-        for index, row in enumerate(payload.cost_matrix)
+        for index, row in enumerate(cost_matrix)
         if len(row) != col_count
     ]
     if ragged:
@@ -102,12 +118,16 @@ def run_assignment(payload: AssignmentRequestSchema):
             ),
         )
 
-    result = AssignmentService.solve_assignment(
-        payload.cost_matrix,
-        row_labels=payload.row_labels,
-        col_labels=payload.col_labels,
-        maximize=payload.maximize,
-    )
+    try:
+        result = AssignmentService.solve_assignment(
+            cost_matrix,
+            row_labels=row_labels,
+            col_labels=col_labels,
+            maximize=payload.maximize,
+            forbidden_cells=forbidden_cells,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return result
 
 
