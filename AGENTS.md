@@ -8,8 +8,8 @@
 
 | Action | Command |
 |--------|---------|
-| Run all tests (venv) | `.\venv\Scripts\pytest.exe -q tests/test_algorithms.py` |
-| Run all tests (python -m) | `python -m pytest -q tests/test_algorithms.py` (requires CWD on sys.path) |
+| Run all tests (venv) | `.venv/bin/python -m pytest -q` |
+| Run all tests (python -m) | `python -m pytest -q` (from the repository root) |
 | Quick inline test | Use `TestClient(app)` from `app.main` in a python script |
 | Lint / typecheck | Not configured — no `pyproject.toml`, `ruff.toml`, or `setup.cfg` |
 
@@ -27,8 +27,8 @@
 
 ## 🧪 Testing
 
-- **5 tests** in `tests/test_algorithms.py` cover: Johnson all-pairs (no negative cycle), Johnson negative-cycle detection, assignment minimization (classic 3×3), assignment maximization + rectangular matrix, Johnson rejects undirected graphs.
-- All 5 pass with `pytest` from the repo root using the venv.
+- Tests under `tests/` cover graph validation, assignment, Northwest, trees, Dijkstra, and Kruskal.
+- Run the complete suite from the repository root with `.venv/bin/python -m pytest -q`.
 - **Quirk**: `from app.main import app` works when running `python -m pytest` from `E:\IV0_5\MAT-361` but may fail if CWD is not on `sys.path`. Prefer the inline `TestClient` approach or running pytest from the root.
 
 ---
@@ -39,7 +39,8 @@
 |----------|-------|
 | `GET /` | Root healthcheck. Returns `{"status":"online", ...}`. |
 | `GET /health` | `SuccessResponse` envelope. |
-| `POST /api/v1/graph/algorithms/dijkstra` | **Stub**: returns `{"camino": [source, target], "costo_total": 0, "simulated": true}`. The `payload` (GraphPayloadSchema) is accepted but not used — result is hardcoded. |
+| `POST /api/v1/graph/algorithms/dijkstra` | Real single-source shortest paths with step trace. Respects directed/undirected edges, requires non-negative weights, and optionally highlights a target path. |
+| `POST /api/v1/graph/algorithms/kruskal` | Real minimum or maximum spanning tree/forest. Ignores edge direction with a warning and reports each edge decision. |
 | `POST /api/v1/graph/algorithms/bfs` | **Stub**: returns `{"orden_recorrido": [start_node], "simulated": true}`. Same — payload ignored. |
 | `POST /api/v1/graph/algorithms/johnson` | Real algorithm. Requires directed edges (`is_directed=True`). Returns `has_negative_cycle`, `distances`, `paths`. **Response**: does NOT use `response_model` — returns raw dict compatible with `SuccessResponse` fields. |
 | `POST /api/v1/graph/algorithms/assignment` | Real Hungarian algorithm. Returns `assignments`, `total_cost`, `initial_cost_matrix`, `steps`, **and new**: `padding_info` (for rectangular matrices) and each step may have `selected_zeros`. Uses `response_model=AssignmentResponseSchema`. |
@@ -56,7 +57,7 @@
 | `requirements.txt` UTF-16LE + missing numpy/scipy | `requirements.txt` | Converted to UTF-8; added `numpy>=1.26.0` and `scipy>=1.11.0` |
 | CORS preflight middleware reflected any origin | `app/main.py` | Removed custom `handle_cors_preflight` middleware. CORSMiddleware only now. |
 | 500 handler leaked `str(exc)` | `app/main.py:71-81` | Removed `details=str(exc)`; added `traceback.print_exc()` for server-side logging only. |
-| `/dijkstra` / `/bfs` present results as real | `app/api/algorithms.py:12-31` | Added `simulated: True` field and `response_model=SuccessResponse` so the contract is explicit. |
+| `/bfs` is not implemented | `app/api/algorithms.py` | The response is explicitly marked `simulated: True`; Dijkstra and Kruskal are implemented separately. |
 | Hungarian `steps` matrices wider than `initial_cost_matrix` for rect. matrices | `app/services/assignment_service.py:160-262` | Added `padding_info` to response and `selected_zeros` to `AssignmentStepSchema`. Frontend now knows which columns/rows are dummy. |
 | `EdgeSchema` allowed negative weights on undirected graphs | `app/schemas/graph.py:28-48` | Added `@root_validator` that rejects `weight < 0` when `is_directed=False` (negative weights are valid only for directed graphs, used by Johnson). |
 | `johnson_service.py` used `__import__("networkx").DiGraph` | `app/services/johnson_service.py:87` | Replaced with `import networkx as nx` + `nx.DiGraph`. |
@@ -73,9 +74,9 @@ MAT-361/
 │   ├── core/config.py # Settings (pydantic_settings.BaseSettings)
 │   ├── api/router.py # Includes health, graph, algorithms routers
 │   ├── api/health.py # /health endpoint
-│   ├── api/algorithms.py # /dijkstra, /bfs, /johnson, /assignment
-│   ├── schemas/      # Pydantic models (assignment, graph, responses)
-│   └── services/     # Business logic (assignment Hungarian, Johnson, graph math)
+│   ├── api/algorithms.py # /dijkstra, /kruskal, /bfs, /johnson, /assignment
+│   ├── schemas/      # Pydantic models for graphs, requests, and responses
+│   └── services/     # Business logic for graph algorithms
 ├── requirements.txt  # Deps (UTF-8 now; numpy/scipy added)
 ├── tests/            # pytest tests (5 tests covering algorithms)
 ├── venv/             # Virtual environment — .gitignored
