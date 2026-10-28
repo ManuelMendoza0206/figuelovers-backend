@@ -1,7 +1,9 @@
 from fastapi import APIRouter, HTTPException
 
 from app.schemas.assignment import AssignmentRequestSchema, AssignmentResponseSchema
+from app.schemas.dijkstra import DijkstraRequestSchema, DijkstraResponseSchema
 from app.schemas.graph import GraphPayloadSchema
+from app.schemas.kruskal import KruskalRequestSchema, KruskalResponseSchema
 from app.schemas.northwest import NorthwestRequestSchema, NorthwestResponseSchema
 from app.schemas.tree import (
     TreeBuildRequestSchema,
@@ -13,7 +15,9 @@ from app.schemas.tree import (
 )
 from app.schemas.responses import SuccessResponse
 from app.services.assignment_service import AssignmentService
+from app.services.dijkstra_service import DijkstraService
 from app.services.johnson_service import JohnsonService
+from app.services.kruskal_service import KruskalService
 from app.services.northwest_service import NorthwestService
 from app.services.tree_service import TreeService
 from app.services.graph_service import GraphService
@@ -29,19 +33,27 @@ router = APIRouter(prefix="/graph/algorithms", tags=["Algoritmos (Rutas y Recorr
 MAX_ASSIGNMENT_DIMENSION = 20
 
 
-@router.post("/dijkstra", response_model=SuccessResponse)
-def run_dijkstra(source: str, target: str, payload: GraphPayloadSchema):
+@router.post("/dijkstra", response_model=DijkstraResponseSchema)
+def run_dijkstra(payload: DijkstraRequestSchema):
     """
-    Calcula la ruta más corta entre el nodo 'source' y el nodo 'target'.
-    Devuelve un resultado simulado ya que el algoritmo real de Dijkstra
-    sobre NetworkX requiere un grafo con pesos no negativos y construcción
-    de árbol de expansión, mientras que los datos vienen desde React como
-    una lista de aristas sin garantizar conectividad completa.
+    Camino mínimo desde un nodo origen (Dijkstra, implementación propia
+    con heapq). Cada arista se respeta según su `is_directed`: dirigida
+    se recorre solo source→target, no dirigida en ambos sentidos. Los
+    pesos deben ser >= 0 (negativos => 400, usar Johnson). `target` es
+    opcional y solo sirve para resaltar un camino: las distancias se
+    calculan siempre a todos los nodos.
     """
-    return SuccessResponse(
-        message="Ruta calculada (simulada) desde {source} hasta {target}".format(source=source, target=target),
-        data={"camino": [source, target], "costo_total": 0, "simulated": True},
-    )
+    return DijkstraService.calculate_shortest_paths(payload)
+
+
+@router.post("/kruskal", response_model=KruskalResponseSchema)
+def run_kruskal(payload: KruskalRequestSchema):
+    """
+    Árbol de expansión MÍNIMA (o MÁXIMA con objective='max') con
+    Kruskal y union-find propio. El grafo se trata como no dirigido
+    (la dirección se ignora, con aviso). Grafo desconexo => bosque.
+    """
+    return KruskalService.calculate_spanning_tree(payload)
 
 
 @router.post("/bfs", response_model=SuccessResponse)
