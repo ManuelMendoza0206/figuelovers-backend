@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from heapq import heappop, heappush
+from heapq import heapify, heappop, heappush
 from math import inf
 
 from fastapi import HTTPException
@@ -72,6 +72,21 @@ class DijkstraService:
                 detail=f"El nodo destino '{payload.target}' no existe en el grafo.",
             )
 
+        if payload.objective == "max":
+            undirected = [
+                edge.id for edge in payload.graph.edges if not edge.is_directed
+            ]
+            if undirected:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Maximizar requiere un grafo dirigido sin ciclos (DAG): "
+                        "las aristas no dirigidas no son válidas. Aristas afectadas: "
+                        + ", ".join(undirected)
+                        + ". Convertilas a dirigidas o eliminálas."
+                    ),
+                )
+
         negative: list[str] = []
         for edge in payload.graph.edges:
             weight = DijkstraService._resolve_weight(edge.weight)
@@ -80,7 +95,7 @@ class DijkstraService:
                     status_code=400,
                     detail=f"La arista '{edge.id}' tiene un peso no finito ({edge.weight}).",
                 )
-            if weight < 0:
+            if payload.objective == "min" and weight < 0:
                 negative.append(f"{edge.id} ({edge.source}→{edge.target}, peso {weight})")
 
         if negative:
@@ -174,8 +189,16 @@ class DijkstraService:
 
     @staticmethod
     def calculate_shortest_paths(payload: DijkstraRequestSchema) -> DijkstraResponseSchema:
+        """Punto de entrada: Dijkstra para `min`, longest path para `max`."""
         DijkstraService._validate(payload)
+        if payload.objective == "max":
+            return DijkstraService._calculate_longest_paths(payload)
+        return DijkstraService._calculate_shortest_paths(payload)
 
+    @staticmethod
+    def _calculate_shortest_paths(
+        payload: DijkstraRequestSchema,
+    ) -> DijkstraResponseSchema:
         node_order: dict[str, int] = {
             node.id: index for index, node in enumerate(payload.graph.nodes)
         }
@@ -256,12 +279,157 @@ class DijkstraService:
                 )
             )
 
-        paths: dict[str, list[str]] = {}
-        for target in node_order:
-            nodes_path, _ = DijkstraService._reconstruct_path(
-                predecessors, predecessor_edges, source, target
+        return DijkstraService._build_response(
+            payload,
+            distances,
+            predecessors,
+            predecessor_edges,
+            order_visited,
+            steps,
+            warnings,
+        )
+
+    @staticmethod
+    def _calculate_longest_paths(
+        payload: DijkstraRequestSchema,
+    ) -> DijkstraResponseSchema:
+        """Camino de peso máximo en un DAG, en orden topológico.
+
+        La validación ya rechazó aristas no dirigidas. Un ciclo dirigido
+        hace imposible definir un camino máximo finito, así que se
+        responde 400 en vez de devolver un resultado incorrecto.
+        """
+        node_order: dict[str, int] = {
+            node.id: index for index, node in enumerate(payload.graph.nodes)
+        }
+        adjacency, self_loops, weightless = DijkstraService._build_adjacency(payload)
+
+        warnings: list[str] = []
+        if self_loops:
+            warnings.append(
+                f"Se ignoraron {self_loops} bucle(s) (arista de un nodo a sí mismo): "
+                "no pueden mejorar ningún camino."
             )
-            paths[target] = nodes_path
+        if weightless:
+            warnings.append(
+                "Las aristas sin peso (" + ", ".join(weightless) + ") se trataron con peso 1."
+            )
+
+        indegree: dict[str, int] = {node: 0 for node in node_order}
+        for edge in payload.graph.edges:
+            if edge.source == edge.target:
+                continue
+            indegree[edge.target] += 1
+
+        queue: list[tuple[int, str]] = [
+            (node_order[node], node)
+            for node, degree in indegree.items()
+            if degree == 0
+        ]
+        heapify(queue)
+
+        topological_order: list[str] = []
+        while queue:
+            _, node = heappop(queue)
+            topological_order.append(node)
+            for neighbor, _, _ in adjacency[node]:
+                indegree[neighbor] -= 1
+                if indegree[neighbor] == 0:
+                    heappush(queue, (node_order[neighbor], neighbor))
+
+        if len(topological_order) != len(node_order):
+            cycle_nodes = sorted(
+                (node for node, degree in indegree.items() if degree > 0),
+                key=lambda node: node_order[node],
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Maximizar requiere un grafo dirigido sin ciclos (DAG). "
+                    "Nodos que forman parte de un ciclo: "
+                    + ", ".join(cycle_nodes)
+                    + "."
+                ),
+            )
+
+        source = payload.source
+        distances: dict[str, float | None] = {node: None for node in node_order}
+        predecessors: dict[str, str | None] = {node: None for node in node_order}
+        predecessor_edges: dict[str, str | None] = {node: None for node in node_order}
+        distances[source] = 0.0
+
+        order_visited: list[str] = []
+        steps: list[DijkstraStepSchema] = []
+
+        for node in topological_order:
+            current_distance = distances[node]
+            if current_distance is None:
+                continue
+
+            order_visited.append(node)
+            relaxations: list[DijkstraRelaxationSchema] = []
+
+            for neighbor, weight, edge_id in adjacency[node]:
+                old_distance = distances[neighbor]
+                candidate = current_distance + weight
+                improved = old_distance is None or candidate > old_distance
+
+                relaxations.append(
+                    DijkstraRelaxationSchema(
+                        **{
+                            "from": node,
+                            "to": neighbor,
+                        },
+                        edge_id=edge_id,
+                        old_distance=old_distance,
+                        new_distance=candidate,
+                        improved=improved,
+                    )
+                )
+
+                if improved:
+                    distances[neighbor] = candidate
+                    predecessors[neighbor] = node
+                    predecessor_edges[neighbor] = edge_id
+
+            steps.append(
+                DijkstraStepSchema(
+                    step=len(steps) + 1,
+                    node=node,
+                    distance=float(current_distance),
+                    relaxations=relaxations,
+                    distances_snapshot=dict(distances),
+                    visited_snapshot=list(order_visited),
+                )
+            )
+
+        return DijkstraService._build_response(
+            payload,
+            distances,
+            predecessors,
+            predecessor_edges,
+            order_visited,
+            steps,
+            warnings,
+        )
+
+    @staticmethod
+    def _build_response(
+        payload: DijkstraRequestSchema,
+        distances: dict[str, float | None],
+        predecessors: dict[str, str | None],
+        predecessor_edges: dict[str, str | None],
+        order_visited: list[str],
+        steps: list[DijkstraStepSchema],
+        warnings: list[str],
+    ) -> DijkstraResponseSchema:
+        source = payload.source
+        paths: dict[str, list[str]] = {}
+        for node in payload.graph.nodes:
+            nodes_path, _ = DijkstraService._reconstruct_path(
+                predecessors, predecessor_edges, source, node.id
+            )
+            paths[node.id] = nodes_path
 
         target_path: DijkstraTargetPathSchema | None = None
         if payload.target is not None:
@@ -280,6 +448,7 @@ class DijkstraService:
                 )
 
         return DijkstraResponseSchema(
+            objective=payload.objective,
             source=source,
             target=payload.target,
             distances=distances,

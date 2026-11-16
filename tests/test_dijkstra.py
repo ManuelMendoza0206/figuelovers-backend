@@ -16,8 +16,8 @@ client = TestClient(app)
 ENDPOINT = "/api/v1/graph/algorithms/dijkstra"
 
 
-def make_graph(nodes, edges, source="A", target=None):
-    return {
+def make_graph(nodes, edges, source="A", target=None, objective=None):
+    payload = {
         "graph": {
             "nodes": [{"id": node} for node in nodes],
             "edges": [
@@ -34,6 +34,9 @@ def make_graph(nodes, edges, source="A", target=None):
         "source": source,
         "target": target,
     }
+    if objective is not None:
+        payload["objective"] = objective
+    return payload
 
 
 # Grafo dirigido del enunciado, valores calculados a mano:
@@ -207,6 +210,97 @@ def test_dijkstra_source_equals_target():
     assert body["distances"]["A"] == 0
     assert body["paths"]["A"] == ["A"]
     assert body["target_path"] == {"nodes": ["A"], "edges": [], "total_distance": 0}
+
+
+def test_dijkstra_max_longest_path_in_dag():
+    # A→C 5 + C→D 1 = 6 es mejor que A→B 2 + B→C 2 + C→D 1 = 5.
+    payload = make_graph(
+        ["A", "B", "C", "D"],
+        [
+            ("eAB", "A", "B", 2.0, True),
+            ("eAC", "A", "C", 5.0, True),
+            ("eBC", "B", "C", 2.0, True),
+            ("eCD", "C", "D", 1.0, True),
+        ],
+        source="A",
+        target="D",
+        objective="max",
+    )
+    response = client.post(ENDPOINT, json=payload)
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["objective"] == "max"
+    assert body["distances"] == {"A": 0, "B": 2, "C": 5, "D": 6}
+    assert body["paths"]["D"] == ["A", "C", "D"]
+    assert body["target_path"] == {
+        "nodes": ["A", "C", "D"],
+        "edges": ["eAC", "eCD"],
+        "total_distance": 6,
+    }
+    assert body["order_visited"] == ["A", "B", "C", "D"]
+    assert [step["distance"] for step in body["steps"]] == [0, 2, 5, 6]
+
+    # La ruta A→B→C propone 4 y no reemplaza el 5 de A→C.
+    step_b = next(step for step in body["steps"] if step["node"] == "B")
+    to_c = next(r for r in step_b["relaxations"] if r["to"] == "C")
+    assert to_c["old_distance"] == 5
+    assert to_c["new_distance"] == 4
+    assert to_c["improved"] is False
+
+
+def test_dijkstra_max_allows_negative_weights_in_dag():
+    # El camino A→B→C suma 1 y supera al directo A→C de 0.
+    payload = make_graph(
+        ["A", "B", "C"],
+        [
+            ("eAB", "A", "B", -2.0, True),
+            ("eAC", "A", "C", 0.0, True),
+            ("eBC", "B", "C", 3.0, True),
+        ],
+        source="A",
+        target="C",
+        objective="max",
+    )
+    response = client.post(ENDPOINT, json=payload)
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["distances"]["C"] == 1
+    assert body["paths"]["C"] == ["A", "B", "C"]
+    assert body["target_path"]["total_distance"] == 1
+
+
+def test_dijkstra_max_rejects_undirected_edges():
+    payload = make_graph(
+        ["A", "B"],
+        [("eAB", "A", "B", 2.0, False)],
+        source="A",
+        objective="max",
+    )
+    response = client.post(ENDPOINT, json=payload)
+    assert response.status_code == 400, response.text
+    message = response.json()["message"].lower()
+    assert "dirigido" in message
+    assert "no dirigidas" in message
+    assert "eab" in message
+
+
+def test_dijkstra_max_rejects_cycles():
+    payload = make_graph(
+        ["A", "B"],
+        [
+            ("eAB", "A", "B", 1.0, True),
+            ("eBA", "B", "A", 1.0, True),
+        ],
+        source="A",
+        objective="max",
+    )
+    response = client.post(ENDPOINT, json=payload)
+    assert response.status_code == 400, response.text
+    message = response.json()["message"].lower()
+    assert "ciclo" in message
+    assert "a, b" in message
 
 
 def test_dijkstra_parallel_edges_and_self_loop():

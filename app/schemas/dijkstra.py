@@ -1,13 +1,16 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.graph import GraphPayloadSchema
 
 
 class DijkstraRequestSchema(BaseModel):
-    """Entrada del camino mínimo con un origen único.
+    """Entrada del camino mínimo o máximo con un origen único.
 
     A diferencia de Johnson, el grafo puede mezclar aristas dirigidas y
     no dirigidas: cada arista se respeta segun su flag `is_directed`.
+    El objetivo `max` solo es válido para un DAG dirigido.
     """
 
     graph: GraphPayloadSchema = Field(
@@ -19,6 +22,13 @@ class DijkstraRequestSchema(BaseModel):
         description=(
             "ID del nodo destino opcional. Solo sirve para resaltar un camino "
             "concreto: las distancias se calculan siempre a TODOS los nodos."
+        ),
+    )
+    objective: Literal["min", "max"] = Field(
+        "min",
+        description=(
+            "min = camino de peso mínimo (Dijkstra). "
+            "max = camino de peso máximo en un grafo dirigido sin ciclos (DAG)."
         ),
     )
 
@@ -73,6 +83,7 @@ class DijkstraTargetPathSchema(BaseModel):
 class DijkstraResponseSchema(BaseModel):
     """Resultado completo de Dijkstra desde un unico origen."""
 
+    objective: Literal["min", "max"] = "min"
     source: str
     target: str | None
     distances: dict[str, float | None] = Field(
